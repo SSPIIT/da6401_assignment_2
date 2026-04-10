@@ -81,16 +81,28 @@ def train_classification(args):
                               num_workers=args.workers, pin_memory=True)
 
     model = VGG11Classifier(num_classes=37, dropout_p=args.dropout).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
-    criterion = nn.CrossEntropyLoss()
+
+    # Use label smoothing to prevent overconfident predictions
+    criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
+
+    # Lower LR with weight decay
+    optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-3)
+
+    # Warmup for 5 epochs then cosine decay
+    def lr_lambda(epoch):
+        warmup = 5
+        if epoch < warmup:
+            return (epoch + 1) / warmup
+        progress = (epoch - warmup) / (args.epochs - warmup)
+        return 0.5 * (1 + __import__('math').cos(__import__('math').pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
     wandb.init(project=args.wandb_project, name=f"cls_{args.run_name}",
                config=vars(args))
 
     best_acc = 0.0
     for epoch in range(1, args.epochs + 1):
-        # ── Train ─────────────────────────────────────────────────────────────
         model.train()
         train_loss = 0.0; correct = 0; total = 0
         for batch in train_loader:
@@ -100,8 +112,9 @@ def train_classification(args):
             logits = model(imgs)
             loss   = criterion(logits, labels)
             loss.backward()
+            # Gradient clipping prevents exploding gradients
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
-
             train_loss += loss.item() * imgs.size(0)
             correct    += (logits.argmax(1) == labels).sum().item()
             total      += imgs.size(0)
@@ -110,7 +123,6 @@ def train_classification(args):
         train_loss /= total
         train_acc   = correct / total
 
-        # ── Validate ──────────────────────────────────────────────────────────
         model.eval()
         val_loss = 0.0; val_correct = 0; val_total = 0
         with torch.no_grad():
@@ -118,7 +130,7 @@ def train_classification(args):
                 imgs   = batch["image"].to(device)
                 labels = batch["label"].to(device)
                 logits = model(imgs)
-                loss   = criterion(logits, labels)
+                loss   = nn.CrossEntropyLoss()(logits, labels)
                 val_loss    += loss.item() * imgs.size(0)
                 val_correct += (logits.argmax(1) == labels).sum().item()
                 val_total   += imgs.size(0)
@@ -142,8 +154,7 @@ def train_classification(args):
 
     wandb.finish()
     print(f"Best val accuracy: {best_acc:.4f}")
-
-
+    
 def train_localization(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(args.seed)

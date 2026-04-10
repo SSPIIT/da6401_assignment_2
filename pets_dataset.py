@@ -38,9 +38,12 @@ def get_transforms(split: str = "train") -> A.Compose:
     if split == "train":
         return A.Compose(
             [
-                A.Resize(IMAGE_SIZE, IMAGE_SIZE),
+                A.Resize(256, 256),
+                A.RandomCrop(IMAGE_SIZE, IMAGE_SIZE),
                 A.HorizontalFlip(p=0.5),
-                A.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1, p=0.5),
+                A.ShiftScaleRotate(shift_limit=0.1, scale_limit=0.2, rotate_limit=15, p=0.5),
+                A.ColorJitter(brightness=0.3, contrast=0.3, saturation=0.3, hue=0.1, p=0.6),
+                A.CoarseDropout(max_holes=8, max_height=32, max_width=32, p=0.3),
                 A.Normalize(mean=IMAGENET_MEAN, std=IMAGENET_STD),
                 ToTensorV2(),
             ],

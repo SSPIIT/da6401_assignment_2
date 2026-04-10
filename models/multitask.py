@@ -26,10 +26,22 @@ class MultiTaskPerceptionModel(nn.Module):
         num_breeds: int = 37,
         seg_classes: int = 3,
         in_channels: int = 3,
-        classifier_path: str = "checkpoints/classifier.pth",
-        localizer_path: str = "checkpoints/localizer.pth",
-        unet_path: str = "checkpoints/unet.pth",
+        classifier_path: str = "classifier.pth",
+        localizer_path: str = "localizer.pth",
+        unet_path: str = "unet.pth",
     ):
+        super().__init__()
+
+        import gdown
+
+        # 🔽 Download classifier weights
+        gdown.download(
+            id="1DMNiCz-bn6_DSGcSeyESmMuIS0cWZWSS",
+            output=classifier_path,
+            quiet=False
+        )
+
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         """
         Initialize the shared backbone/heads using trained weights.
         Args:

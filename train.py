@@ -154,7 +154,7 @@ def train_classification(args):
 
     wandb.finish()
     print(f"Best val accuracy: {best_acc:.4f}")
-    
+
 def train_localization(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     set_seed(args.seed)
@@ -342,22 +342,40 @@ def train_segmentation(args):
 
 def parse_args():
     p = argparse.ArgumentParser(description="DA6401 Assignment-2 training")
-    p.add_argument("--task",   required=True,
+
+    p.add_argument("--task", default="classification",
                    choices=["classification", "localization", "segmentation"])
-    p.add_argument("--data",   default="./data", help="Dataset root directory")
-    p.add_argument("--epochs", type=int, default=30)
-    p.add_argument("--batch_size", type=int, default=32)
-    p.add_argument("--lr",     type=float, default=1e-3)
+
+    p.add_argument("--data", default="/autograder/data")
+
+    p.add_argument("--epochs", type=int, default=60)
+
+    p.add_argument("--batch_size", type=int, default=64)
+
+    p.add_argument("--lr", type=float, default=3e-4)
+
     p.add_argument("--dropout", type=float, default=0.5)
-    p.add_argument("--workers", type=int, default=4)
-    p.add_argument("--seed",   type=int, default=42)
+
+    p.add_argument("--workers", type=int, default=2)
+
+    p.add_argument("--seed", type=int, default=42)
+
     p.add_argument("--wandb_project", default="da6401_a2")
     p.add_argument("--run_name", default="run")
-    p.add_argument("--pretrained_cls", default="checkpoints/classifier.pth",
-                   help="Path to pretrained classifier checkpoint (for encoder init)")
-    p.add_argument("--freeze_encoder", action="store_true",
-                   help="Freeze VGG11 encoder weights during segmentation training")
+
+    p.add_argument("--pretrained_cls", default="checkpoints/classifier.pth")
+
+    p.add_argument("--freeze_encoder", action="store_true")
+
     return p.parse_args()
+
+print("TASK:", args.task)
+print("DATA:", args.data)
+print("EPOCHS:", args.epochs)
+
+if not os.path.exists(args.data):
+    print("Switching to /autograder/data")
+    args.data = "/autograder/data"
 
 
 if __name__ == "__main__":

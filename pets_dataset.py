@@ -81,17 +81,18 @@ class OxfordIIITPetDataset(Dataset):
     """
 
     # 37 breed class names in alphabetical order (matches list.txt CLASS_ID 1-37)
+    # Replace the BREEDS list and the class_id line in __init__
+
+# DELETE the old BREEDS list entirely and replace with this:
     BREEDS = [
-        "Abyssinian", "Bengal", "Birman", "Bombay", "British_Shorthair",
-        "Egyptian_Mau", "Maine_Coon", "Persian", "Ragdoll", "Russian_Blue",
-        "Siamese", "Sphynx",
-        "american_bulldog", "american_pit_bull_terrier", "basset_hound",
-        "beagle", "boxer", "chihuahua", "english_cocker_spaniel",
+        "Abyssinian", "american_bulldog", "american_pit_bull_terrier",
+        "basset_hound", "beagle", "Bengal", "Birman", "Bombay", "boxer",
+        "British_Shorthair", "chihuahua", "Egyptian_Mau", "english_cocker_spaniel",
         "english_setter", "german_shorthaired", "great_pyrenees", "havanese",
-        "japanese_chin", "keeshond", "leonberger", "miniature_pinscher",
-        "newfoundland", "pomeranian", "pug", "saint_bernard", "samoyed",
-        "scottish_terrier", "shiba_inu", "staffordshire_bull_terrier",
-        "wheaten_terrier", "yorkshire_terrier",
+        "japanese_chin", "keeshond", "leonberger", "Maine_Coon", "miniature_pinscher",
+        "newfoundland", "Persian", "pomeranian", "pug", "Ragdoll", "Russian_Blue",
+        "saint_bernard", "samoyed", "scottish_terrier", "shiba_inu", "Siamese",
+        "Sphynx", "staffordshire_bull_terrier", "wheaten_terrier", "yorkshire_terrier",
     ]
 
     def __init__(

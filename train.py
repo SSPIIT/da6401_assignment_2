@@ -1,19 +1,16 @@
-"""Training entrypoint
-"""
 """Training entrypoint for all tasks.
 
-Usage examples:
-    python train.py --task classification --data ./data --epochs 30 --lr 1e-3
-    python train.py --task localization   --data ./data --epochs 30 --lr 1e-4
-    python train.py --task segmentation   --data ./data --epochs 30 --lr 1e-4
+Usage:
+    python train.py --task classification --data ./data --epochs 30 --lr 1e-4 --pretrained
+    python train.py --task localization   --data ./data --epochs 40 --lr 1e-3
+    python train.py --task segmentation   --data ./data --epochs 40 --lr 1e-4
 """
-"""Training entrypoint for all tasks."""
 
-# import sys
+import sys
 import os
-# sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
 import argparse
-# import os
 import random
 from pathlib import Path
 
@@ -42,12 +39,10 @@ def set_seed(seed: int = 42):
 # ── Metrics ───────────────────────────────────────────────────────────────────
 
 def compute_iou_batch(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
-    """Compute per-sample IoU for a batch of (cx,cy,w,h) boxes."""
     px1 = pred[:, 0] - pred[:, 2] / 2;  px2 = pred[:, 0] + pred[:, 2] / 2
     py1 = pred[:, 1] - pred[:, 3] / 2;  py2 = pred[:, 1] + pred[:, 3] / 2
     tx1 = target[:, 0] - target[:, 2] / 2; tx2 = target[:, 0] + target[:, 2] / 2
     ty1 = target[:, 1] - target[:, 3] / 2; ty2 = target[:, 1] + target[:, 3] / 2
-
     ix1 = torch.max(px1, tx1); ix2 = torch.min(px2, tx2)
     iy1 = torch.max(py1, ty1); iy2 = torch.min(py2, ty2)
     inter = (ix2 - ix1).clamp(0) * (iy2 - iy1).clamp(0)
@@ -57,7 +52,6 @@ def compute_iou_batch(pred: torch.Tensor, target: torch.Tensor, eps: float = 1e-
 
 
 def dice_score(pred_logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-6) -> float:
-    """Macro-average Dice score over all classes."""
     pred = pred_logits.argmax(dim=1)
     num_classes = pred_logits.shape[1]
     scores = []
@@ -67,7 +61,7 @@ def dice_score(pred_logits: torch.Tensor, target: torch.Tensor, eps: float = 1e-
     return float(np.mean(scores))
 
 
-# ── Training loops ────────────────────────────────────────────────────────────
+# ── Task 1: Classification ────────────────────────────────────────────────────
 
 def train_classification(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -80,26 +74,23 @@ def train_classification(args):
     val_loader   = DataLoader(val_ds,   batch_size=args.batch_size, shuffle=False,
                               num_workers=args.workers, pin_memory=True)
 
-    model = VGG11Classifier(num_classes=37, dropout_p=args.dropout).to(device)
+    model = VGG11Classifier(num_classes=37, dropout_p=args.dropout,
+                            pretrained=args.pretrained).to(device)
 
-    # Use label smoothing to prevent overconfident predictions
     criterion = nn.CrossEntropyLoss(label_smoothing=0.1)
-
-    # Lower LR with weight decay
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-3)
 
-    # Warmup for 5 epochs then cosine decay
     def lr_lambda(epoch):
         warmup = 5
         if epoch < warmup:
             return (epoch + 1) / warmup
-        progress = (epoch - warmup) / (args.epochs - warmup)
-        return 0.5 * (1 + __import__('math').cos(__import__('math').pi * progress))
+        import math
+        progress = (epoch - warmup) / max(1, args.epochs - warmup)
+        return 0.5 * (1 + math.cos(math.pi * progress))
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
-    wandb.init(project=args.wandb_project, name=f"cls_{args.run_name}",
-               config=vars(args))
+    wandb.init(project=args.wandb_project, name=f"cls_{args.run_name}", config=vars(args))
 
     best_acc = 0.0
     for epoch in range(1, args.epochs + 1):
@@ -112,7 +103,6 @@ def train_classification(args):
             logits = model(imgs)
             loss   = criterion(logits, labels)
             loss.backward()
-            # Gradient clipping prevents exploding gradients
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             train_loss += loss.item() * imgs.size(0)
@@ -141,9 +131,7 @@ def train_classification(args):
         wandb.log({"epoch": epoch, "train/loss": train_loss, "train/acc": train_acc,
                    "val/loss": val_loss, "val/acc": val_acc,
                    "lr": optimizer.param_groups[0]["lr"]})
-
-        print(f"[Cls] Epoch {epoch:03d} | "
-              f"train loss {train_loss:.4f} acc {train_acc:.4f} | "
+        print(f"[Cls] Epoch {epoch:03d} | train loss {train_loss:.4f} acc {train_acc:.4f} | "
               f"val loss {val_loss:.4f} acc {val_acc:.4f}")
 
         if val_acc > best_acc:
@@ -154,6 +142,9 @@ def train_classification(args):
 
     wandb.finish()
     print(f"Best val accuracy: {best_acc:.4f}")
+
+
+# ── Task 2: Localization ──────────────────────────────────────────────────────
 
 def train_localization(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -168,36 +159,45 @@ def train_localization(args):
 
     model = VGG11Localizer(dropout_p=args.dropout).to(device)
 
-    # Optionally load pretrained encoder from classifier
     if args.pretrained_cls and os.path.exists(args.pretrained_cls):
-        from models.classification import VGG11Classifier
         cls_model = VGG11Classifier(num_classes=37)
         ckpt = torch.load(args.pretrained_cls, map_location=device)
         sd = ckpt.get("state_dict", ckpt)
         cls_model.load_state_dict(sd)
         model.encoder.load_state_dict(cls_model.encoder.state_dict())
         print("Loaded pretrained encoder from classifier checkpoint.")
+        # Freeze encoder — only train regression head
+        for param in model.encoder.parameters():
+            param.requires_grad = False
+        print("Encoder frozen. Training regression head only.")
 
-    mse_loss = nn.MSELoss()
-    iou_loss = IoULoss(reduction="mean")
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.lr, weight_decay=1e-4)
+    mse_loss    = nn.MSELoss()
+    iou_loss_fn = IoULoss(reduction="mean")
+
+    optimizer = torch.optim.Adam(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=args.lr, weight_decay=1e-4
+    )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    wandb.init(project=args.wandb_project, name=f"loc_{args.run_name}",
-               config=vars(args))
+    wandb.init(project=args.wandb_project, name=f"loc_{args.run_name}", config=vars(args))
 
+    S = 224.0   # image size — used to normalise MSE to [0,1] scale
     best_iou = 0.0
     for epoch in range(1, args.epochs + 1):
-        # ── Train ─────────────────────────────────────────────────────────────
         model.train()
         total_loss = 0.0; total = 0
         for batch in train_loader:
-            imgs  = batch["image"].to(device)
-            bboxes = batch["bbox"].to(device)
+            imgs   = batch["image"].to(device)
+            bboxes = batch["bbox"].to(device)    # pixel coords [0, 224]
+            bn     = bboxes / S                  # normalised   [0, 1]
             optimizer.zero_grad()
-            preds = model(imgs)
-            loss  = mse_loss(preds, bboxes) + iou_loss(preds, bboxes)
+            preds  = model(imgs)                 # pixel coords (ReLU output)
+            pn     = preds / S
+            # Normalised MSE keeps gradients stable; IoULoss is scale-invariant
+            loss   = mse_loss(pn, bn) + iou_loss_fn(preds, bboxes)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             total_loss += loss.item() * imgs.size(0)
             total      += imgs.size(0)
@@ -205,15 +205,16 @@ def train_localization(args):
         scheduler.step()
         train_loss = total_loss / total
 
-        # ── Validate ──────────────────────────────────────────────────────────
         model.eval()
         val_loss = 0.0; mean_iou = 0.0; val_total = 0
         with torch.no_grad():
             for batch in val_loader:
                 imgs   = batch["image"].to(device)
                 bboxes = batch["bbox"].to(device)
+                bn     = bboxes / S
                 preds  = model(imgs)
-                loss   = mse_loss(preds, bboxes) + iou_loss(preds, bboxes)
+                pn     = preds / S
+                loss   = mse_loss(pn, bn) + iou_loss_fn(preds, bboxes)
                 val_loss  += loss.item() * imgs.size(0)
                 mean_iou  += compute_iou_batch(preds, bboxes).sum().item()
                 val_total += imgs.size(0)
@@ -224,9 +225,7 @@ def train_localization(args):
         wandb.log({"epoch": epoch, "train/loss": train_loss,
                    "val/loss": val_loss, "val/iou": mean_iou,
                    "lr": optimizer.param_groups[0]["lr"]})
-
-        print(f"[Loc] Epoch {epoch:03d} | "
-              f"train loss {train_loss:.4f} | "
+        print(f"[Loc] Epoch {epoch:03d} | train loss {train_loss:.4f} | "
               f"val loss {val_loss:.4f} IoU {mean_iou:.4f}")
 
         if mean_iou > best_iou:
@@ -238,6 +237,8 @@ def train_localization(args):
     wandb.finish()
     print(f"Best mean IoU: {best_iou:.4f}")
 
+
+# ── Task 3: Segmentation ──────────────────────────────────────────────────────
 
 def train_segmentation(args):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -252,38 +253,31 @@ def train_segmentation(args):
 
     model = VGG11UNet(num_classes=3, dropout_p=args.dropout).to(device)
 
-    # Optionally load pretrained encoder from classifier
     if args.pretrained_cls and os.path.exists(args.pretrained_cls):
-        from models.classification import VGG11Classifier
         cls_model = VGG11Classifier(num_classes=37)
         ckpt = torch.load(args.pretrained_cls, map_location=device)
         sd = ckpt.get("state_dict", ckpt)
         cls_model.load_state_dict(sd)
-        model.encoder.load_state_dict(cls_model.encoder.state_dict())
+        model.enc.load_state_dict(cls_model.encoder.state_dict())
         print("Loaded pretrained encoder from classifier checkpoint.")
 
         if args.freeze_encoder:
-            for param in model.encoder.parameters():
+            for param in model.enc.parameters():
                 param.requires_grad = False
             print("Encoder frozen.")
 
-    # Class weights to handle imbalance (bg >> fg >> uncertain)
-    # Rough pixel distribution: bg~60%, fg~35%, uncertain~5%
-    weights = torch.tensor([0.5, 1.5, 3.0], device=device)
+    weights   = torch.tensor([0.5, 1.5, 3.0], device=device)
     criterion = nn.CrossEntropyLoss(weight=weights)
-
     optimizer = torch.optim.Adam(
         filter(lambda p: p.requires_grad, model.parameters()),
         lr=args.lr, weight_decay=1e-4,
     )
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=args.epochs)
 
-    wandb.init(project=args.wandb_project, name=f"seg_{args.run_name}",
-               config=vars(args))
+    wandb.init(project=args.wandb_project, name=f"seg_{args.run_name}", config=vars(args))
 
     best_dice = 0.0
     for epoch in range(1, args.epochs + 1):
-        # ── Train ─────────────────────────────────────────────────────────────
         model.train()
         total_loss = 0.0; total = 0
         for batch in train_loader:
@@ -293,6 +287,7 @@ def train_segmentation(args):
             logits = model(imgs)
             loss   = criterion(logits, masks)
             loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=5.0)
             optimizer.step()
             total_loss += loss.item() * imgs.size(0)
             total      += imgs.size(0)
@@ -300,7 +295,6 @@ def train_segmentation(args):
         scheduler.step()
         train_loss = total_loss / total
 
-        # ── Validate ──────────────────────────────────────────────────────────
         model.eval()
         val_loss = 0.0; val_dice = 0.0; val_pix_acc = 0.0; val_total = 0
         with torch.no_grad():
@@ -309,11 +303,11 @@ def train_segmentation(args):
                 masks = batch["mask"].to(device)
                 logits = model(imgs)
                 loss   = criterion(logits, masks)
-                val_loss     += loss.item() * imgs.size(0)
-                val_dice     += dice_score(logits, masks) * imgs.size(0)
-                pix_acc       = (logits.argmax(1) == masks).float().mean().item()
-                val_pix_acc  += pix_acc * imgs.size(0)
-                val_total    += imgs.size(0)
+                val_loss    += loss.item() * imgs.size(0)
+                val_dice    += dice_score(logits, masks) * imgs.size(0)
+                pix_acc      = (logits.argmax(1) == masks).float().mean().item()
+                val_pix_acc += pix_acc * imgs.size(0)
+                val_total   += imgs.size(0)
 
         val_loss    /= val_total
         val_dice    /= val_total
@@ -323,9 +317,7 @@ def train_segmentation(args):
                    "val/loss": val_loss, "val/dice": val_dice,
                    "val/pixel_acc": val_pix_acc,
                    "lr": optimizer.param_groups[0]["lr"]})
-
-        print(f"[Seg] Epoch {epoch:03d} | "
-              f"train loss {train_loss:.4f} | "
+        print(f"[Seg] Epoch {epoch:03d} | train loss {train_loss:.4f} | "
               f"val loss {val_loss:.4f} Dice {val_dice:.4f} PixAcc {val_pix_acc:.4f}")
 
         if val_dice > best_dice:
@@ -342,40 +334,22 @@ def train_segmentation(args):
 
 def parse_args():
     p = argparse.ArgumentParser(description="DA6401 Assignment-2 training")
-
-    p.add_argument("--task", default="classification",
+    p.add_argument("--task",   required=True,
                    choices=["classification", "localization", "segmentation"])
-
-    p.add_argument("--data", default="/autograder/data")
-
-    p.add_argument("--epochs", type=int, default=60)
-
-    p.add_argument("--batch_size", type=int, default=64)
-
-    p.add_argument("--lr", type=float, default=3e-4)
-
+    p.add_argument("--data",   default="./data")
+    p.add_argument("--epochs", type=int, default=30)
+    p.add_argument("--batch_size", type=int, default=32)
+    p.add_argument("--lr",     type=float, default=1e-3)
     p.add_argument("--dropout", type=float, default=0.5)
-
-    p.add_argument("--workers", type=int, default=2)
-
-    p.add_argument("--seed", type=int, default=42)
-
+    p.add_argument("--workers", type=int, default=4)
+    p.add_argument("--seed",   type=int, default=42)
     p.add_argument("--wandb_project", default="da6401_a2")
     p.add_argument("--run_name", default="run")
-
+    p.add_argument("--pretrained", action="store_true",
+                   help="Use ImageNet pretrained weights for classification")
     p.add_argument("--pretrained_cls", default="checkpoints/classifier.pth")
-
     p.add_argument("--freeze_encoder", action="store_true")
-
     return p.parse_args()
-
-print("TASK:", args.task)
-print("DATA:", args.data)
-print("EPOCHS:", args.epochs)
-
-if not os.path.exists(args.data):
-    print("Switching to /autograder/data")
-    args.data = "/autograder/data"
 
 
 if __name__ == "__main__":

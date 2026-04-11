@@ -52,7 +52,7 @@ class MultiTaskPerceptionModel(nn.Module):
             localizer_path: Relative path to trained localizer weights.
             unet_path: Relative path to trained unet weights.
         """
-        super().__init__()
+        # super().__init__()
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -83,19 +83,19 @@ class MultiTaskPerceptionModel(nn.Module):
         self.loc_head = localizer.regressor
 
         # ── Segmentation decoder ──────────────────────────────────────────────
-        self.seg_up5  = unet.up5
-        self.seg_dec5 = unet.dec5
-        self.seg_up4  = unet.up4
-        self.seg_dec4 = unet.dec4
-        self.seg_up3  = unet.up3
-        self.seg_dec3 = unet.dec3
-        self.seg_up2  = unet.up2
-        self.seg_dec2 = unet.dec2
-        self.seg_up1  = unet.up1
-        self.seg_dec1 = unet.dec1
-        self.seg_head = unet.head
-        self.seg_drop = unet.dropout
-
+        # self.seg_up5  = unet.up5
+        # self.seg_dec5 = unet.dec5
+        # self.seg_up4  = unet.up4
+        # self.seg_dec4 = unet.dec4
+        # self.seg_up3  = unet.up3
+        # self.seg_dec3 = unet.dec3
+        # self.seg_up2  = unet.up2
+        # self.seg_dec2 = unet.dec2
+        # self.seg_up1  = unet.up1
+        # self.seg_dec1 = unet.dec1
+        # self.seg_head = unet.head
+        # self.seg_drop = unet.dropout
+        self.segmenter = unet
         # Store input size for output scaling in localizer
         self._in_channels = in_channels
 
@@ -126,13 +126,14 @@ class MultiTaskPerceptionModel(nn.Module):
         loc_out = torch.cat([cx, cy, bw, bh], dim=1)
 
         # ── Segmentation ──────────────────────────────────────────────────────
-        d = self.seg_drop(bottleneck)
-        d = self.seg_up5(d);  d = torch.cat([d, skips["block4"]], dim=1); d = self.seg_dec5(d)
-        d = self.seg_up4(d);  d = torch.cat([d, skips["block3"]], dim=1); d = self.seg_dec4(d)
-        d = self.seg_up3(d);  d = torch.cat([d, skips["block2"]], dim=1); d = self.seg_dec3(d)
-        d = self.seg_up2(d);  d = torch.cat([d, skips["block1"]], dim=1); d = self.seg_dec2(d)
-        d = self.seg_up1(d);  d = self.seg_dec1(d)
-        seg_out = self.seg_head(d)
+        # d = self.seg_drop(bottleneck)
+        # d = self.seg_up5(d);  d = torch.cat([d, skips["block4"]], dim=1); d = self.seg_dec5(d)
+        # d = self.seg_up4(d);  d = torch.cat([d, skips["block3"]], dim=1); d = self.seg_dec4(d)
+        # d = self.seg_up3(d);  d = torch.cat([d, skips["block2"]], dim=1); d = self.seg_dec3(d)
+        # d = self.seg_up2(d);  d = torch.cat([d, skips["block1"]], dim=1); d = self.seg_dec2(d)
+        # d = self.seg_up1(d);  d = self.seg_dec1(d)
+        # seg_out = self.seg_head(d)
+        seg_out = self.segmenter(x)
 
         return {
             "classification": cls_out,

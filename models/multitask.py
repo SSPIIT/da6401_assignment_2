@@ -11,12 +11,33 @@ from .localization import VGG11Localizer
 from .segmentation import VGG11UNet
 
 
-class MultiTaskPerceptionModel(nn.Module):
-    """Shared-backbone multi-task model.
+def _download_if_missing(path: str, file_id: str):
+    """Download from Google Drive if checkpoint not found locally."""
+    if os.path.exists(path) and os.path.getsize(path) > 1024:
+        return
+    os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+    print(f"Downloading checkpoint to {path} ...")
+    try:
+        import subprocess
+        subprocess.run(["pip", "install", "gdown", "-q"], check=True)
+        import gdown
+        gdown.download(id=file_id, output=path, quiet=False)
+    except Exception as e:
+        print(f"gdown failed: {e}. Trying wget fallback...")
+        url = f"https://drive.google.com/uc?export=download&id={file_id}"
+        os.system(f"wget -q --no-check-certificate '{url}' -O '{path}'")
 
-    Loads classifier.pth, localizer.pth, unet.pth and assembles a single
-    model with one shared VGG11 backbone and three task heads.
-    """
+
+# Google Drive file IDs — must be shared as "Anyone with the link"
+_GDRIVE_IDS = {
+    "classifier.pth": "1Uoa_OhEWbWpThKlmtkQ0Jat7WyeGaoXo",
+    "localizer.pth":  "1crPXHeDFytXCdch4MptP-WxW3nItYzo9",
+    "unet.pth":       "1aadFoUhUvNmUpNsFMMDm49ByycF8wVH_",
+}
+
+
+class MultiTaskPerceptionModel(nn.Module):
+    """Shared-backbone multi-task model."""
 
     def __init__(
         self,
@@ -30,7 +51,14 @@ class MultiTaskPerceptionModel(nn.Module):
         super().__init__()
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-        # Instantiate all three task models
+        # Auto-download any missing checkpoints
+        for path, key in [
+            (classifier_path, "classifier.pth"),
+            (localizer_path,  "localizer.pth"),
+            (unet_path,       "unet.pth"),
+        ]:
+            _download_if_missing(path, _GDRIVE_IDS[key])
+
         classifier = VGG11Classifier(num_classes=num_breeds, in_channels=in_channels)
         localizer  = VGG11Localizer(in_channels=in_channels)
         unet       = VGG11UNet(num_classes=seg_classes, in_channels=in_channels)
@@ -49,40 +77,28 @@ class MultiTaskPerceptionModel(nn.Module):
         localizer  = _load(localizer,  localizer_path)
         unet       = _load(unet,       unet_path)
 
-        # Shared backbone — from classifier
+        # Shared backbone from classifier
         self.backbone = classifier.encoder
 
-        # Classification head
+        # Task heads
         self.cls_head = classifier.classifier
-
-        # Localisation head
         self.loc_head = localizer.regressor
 
-        # Segmentation — full UNet, share backbone
+        # Segmentation UNet with shared backbone
         self.segmenter     = unet
-        self.segmenter.enc = self.backbone   # weight sharing
+        self.segmenter.enc = self.backbone
 
     def forward(self, x: torch.Tensor):
-        """Single forward pass → classification + localisation + segmentation.
-
+        """Single forward pass.
         Args:
-            x: [B, 3, 224, 224] normalised input tensor.
+            x: [B, 3, 224, 224] normalised input.
         Returns:
-            dict with keys:
-                'classification': [B, num_breeds]
-                'localization':   [B, 4]  (cx, cy, w, h) in pixel coords
-                'segmentation':   [B, seg_classes, H, W]
+            dict with keys: classification, localization, segmentation.
         """
-        # Shared backbone (no skip connections needed for cls/loc)
         bottleneck = self.backbone(x)           # [B, 512, 7, 7]
 
-        # Classification
         cls_out = self.cls_head(bottleneck)     # [B, num_breeds]
-
-        # Localisation — raw ReLU output in pixel coords
         loc_out = self.loc_head(bottleneck)     # [B, 4]
-
-        # Segmentation — UNet handles its own encoder pass with skips
         seg_out = self.segmenter(x)             # [B, seg_classes, H, W]
 
         return {

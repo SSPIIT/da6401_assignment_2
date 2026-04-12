@@ -119,7 +119,7 @@ def visualize_prediction(img_path: str, result: dict, out_path: str = "predictio
 
 def evaluate_classification(model_path: str, data_root: str, device: torch.device):
     """Evaluate classification model on test split and print macro F1."""
-    from pets_dataset import OxfordIIITPetDataset
+    from data.pets_dataset import OxfordIIITPetDataset
     from torch.utils.data import DataLoader
     from sklearn.metrics import f1_score
 

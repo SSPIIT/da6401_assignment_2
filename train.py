@@ -20,7 +20,7 @@ import torch.nn as nn
 import wandb
 from torch.utils.data import DataLoader
 
-from pets_dataset import OxfordIIITPetDataset
+from data.pets_dataset import OxfordIIITPetDataset
 from models.classification import VGG11Classifier
 from models.localization import VGG11Localizer
 from models.segmentation import VGG11UNet
